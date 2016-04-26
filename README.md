@@ -1,2 +1,2 @@
 # sqldep
-readme!
+read source!
