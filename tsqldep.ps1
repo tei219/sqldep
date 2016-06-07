@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-returns 'parse result', 'parse tree', 'use tables', 'CRUD table' table of input transact-sql.
+returns 'parse result', 'formatted', 'parse tree', 'use tables', 'CRUD table' table of input transact-sql.
 
 .DESCRIPTION
 source argument specifies the string such as "select * from table" ,file or directory.
@@ -9,6 +9,7 @@ Each column of the table is as follows:
 	source := in the case of 'string' query , otherwise, it is the file name.
 	parse_error := in the case of 'parse error' object list of error, otherwise, it is null.
 	fragment := not in the case of 'parse error' [Microsoft.SqlServer.TransactSql.ScriptDom.TSqlScript], otherwise, it is null.
+	formatted := formatted sql string.
 	tree := formatted string of [Microsoft.SqlServer.TransactSql.ScriptDom.TSqlScript].
 	tables := use tables list. tables has MultiPartIdentifier like 'SVR.db.schema.table'
 	query := each query of statement in source.
@@ -24,6 +25,15 @@ result has rows by each source. if hard to see columns, use 'format-list'
 type     source                                   parse_error                                                  fragment
 ----     ------                                   -----------                                                  --------
 string   select * from                            Microsoft.SqlServer.TransactSql.ScriptDom.ParseError
+
+.EXAMPLE
+tsqldep.ps1 -f "select * from a; select * from b;"
+'-op format' or '-f' option shows 'formatted' table.
+"formatted" reported formatted sql string.
+result has rows by each statements (shows in 'query'). if hard to see columns, use 'format-list'
+type     source                                   formatted
+----     ------                                   ---------
+string   select * from a; select * from b;        SELECT *...
 
 .EXAMPLE
 tsqldep.ps1 -r "select * from a; select * from b;"
@@ -68,22 +78,23 @@ PS C:\>$(tsqldep.ps1 -r "select * from a;").tree
 https://msdn.microsoft.com/ja-jp/library/hh215705.aspx
 
 .NOTES
-IfStatements ‚Ì‚È‚©‚ÌCRUD
-•¡”ƒe[ƒuƒ‹—˜—pŽž‚ÌCRUDU‚è•ª‚¯delete update
+IfStatements ã®ãªã‹ã®CRUD
+è¤‡æ•°ãƒ†ãƒ¼ãƒ–ãƒ«åˆ©ç”¨æ™‚ã®CRUDæŒ¯ã‚Šåˆ†ã‘delete update
 
 
 #>
 
 # params ######################################################################
 [CmdletBinding()]
-#to operate option order: -p > -t > -c > -r > parse > tables > crud > tree
+#to operate option order: -p > -f > -t > -c > -r > parse > format > tables > crud > tree
 param (
 	[parameter(Mandatory=$true, helpmessage="string/file/directory")] [alias('s')] [string] $source = $args[0],
-	[parameter()] [ValidateSet( 'crud','tables','parse','tree' )] [string] $op = "parse",
+	[parameter()] [ValidateSet( 'crud','tables','parse','tree','format' )] [string] $op = "parse",
 	[switch] $c = $false,
 	[switch] $t = $false,
 	[switch] $p = $false,
 	[switch] $r = $false,
+	[switch] $f = $false,
 	[switch] $desc = $false,
 	[parameter()] $version,
 	[parameter()] $sizelimit
@@ -92,6 +103,7 @@ param (
 if ($r) { $op = "tree" }
 if ($c) { $op = "crud" }
 if ($t) { $op = "tables" }
+if ($f) { $op = "format" }
 if ($p) { $op = "parse" }
 
 $reserved_keyword = @("ADD","ALL","ALTER","AND","ANY","AS","ASC","AUTHORIZATION","BACKUP","BEGIN",
@@ -323,7 +335,18 @@ $sources = $buffertable
 $buffertable = $null
 
 if ($er) {
-	write-host ("[WARN] parsed error. can't continue, exit.") -foregroundcolor yellow;
+	write-host ("[WARN] parsed error. can't continue, exit.") -foregroundcolor red;
+	exit;
+}
+
+if ($op -eq "format") {
+	$sources | % {
+		$str = $_;
+		$sql = ""
+		$generator = new-object Microsoft.SqlServer.TransactSql.ScriptDom.Sql110ScriptGenerator;
+		$generator.GenerateScript($str.fragment, [ref] $sql);
+		mktable( @("type","source","formatted") ) | % { $_.type = $str.type; $_.source = $str.source; $_.formatted = $sql; $_ }
+	}
 	exit;
 }
 #
