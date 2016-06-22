@@ -79,7 +79,6 @@ https://msdn.microsoft.com/ja-jp/library/hh215705.aspx
 
 .NOTES
 IfStatements のなかのCRUD
-複数テーブル利用時のCRUD振り分けdelete update
 
 
 #>
@@ -168,13 +167,13 @@ function showtree {
 }
 
 function gettables {
-	param( $stmt, $pad = 1 )
+	param( $stmt, $alias)
 	$stmt | get-member -membertype property | 
 		? { $_.name -notin @("StartLine","StartOffset","FragmentLength","StartColumn","FirstTokenIndex","LastTokenIndex","ScriptTokenStream") } | 
 			% { 
 					if ($stmt.($_.name) -ne $null) {
 						if ($_.name -eq "TableReferences") { 
-							$stmt.($_.name) | % { gettables $_ }
+							$stmt.($_.name) | % { gettables $_; }
 						} else {
 							if($stmt.($_.name).DataType) {
 								#datatype
@@ -185,10 +184,14 @@ function gettables {
 									#}
 								} else {
 									if ($stmt.($_.name).BaseIdentifier) {
-										$stmt.($_.name) | % { ($_.ServerIdentifier.value, $_.DatabaseIdentifier.value, $_.SchemaIdentifier.value, $_.BaseIdentifier.value) -join "." }
+										$stmt.($_.name) | % { $(($_.ServerIdentifier.value, $_.DatabaseIdentifier.value, $_.SchemaIdentifier.value, $_.BaseIdentifier.value) -join ".") + $alias }
 									}
 								}
-								gettables $stmt.($_.name)
+								if ($stmt.Alias) {
+									gettables $stmt.($_.name) " as "+$stmt.Alias.value
+								} else {
+									gettables $stmt.($_.name)
+								}
 							}
 						}
 					}
@@ -197,7 +200,10 @@ function gettables {
 
 function showtables {
 	param( $stmt, $parent )
-	$tabname = $stmt | % { ($_.ServerIdentifier.value, $_.DatabaseIdentifier.value, $_.SchemaIdentifier.value, $_.BaseIdentifier.value) -join "." }
+	if ($parent.Alias) {
+		$alias = " as "+$parent.Alias.value
+	}
+	$tabname = $stmt | % { $(($_.ServerIdentifier.value, $_.DatabaseIdentifier.value, $_.SchemaIdentifier.value, $_.BaseIdentifier.value) -join ".") + $alias }
 	if($parent.parameters) {
 		$tabname = $tabname + "()"
 	}
@@ -328,12 +334,56 @@ $buffertable | % {
 	}
 	switch ($stmts.stmt.gettype().name) {
 		"CreateTableStatement" { $stmts.stmt; $stmts.tables | % { $crud[$stmts.source]["C"] += $_; } }
-		"SelectStatement" { $stmts.tables | % { $crud[$stmts.source]["R"] += $_; } }
-		"InsertStatement" { $stmts.tables | % { $crud[$stmts.source]["C"] += $_; } }
-		"IfStatement" { $stmts.stmt.ThenStatement.StatementList.Statements.QueryExpression  }
-		"UpdateStatement" { $stmts.tables | % { $crud[$stmts.source]["U"] += $_; } }
-		"DeleteStatement" { $stmts.tables | % { $crud[$stmts.source]["D"] += $_; } }
 		"DropTableStatement" { $stmts.tables | % { $crud[$stmts.source]["D"] += $_; } }
+		"SelectStatement" { 
+				if ($stmts.stmt.Into) {
+					$into = $(showtables $stmts.stmt.Into)
+				}
+				$stmts.tables | % { 
+					if ($_ -ne $into) {
+						$crud[$stmts.source]["R"] += $_; 
+					} else {
+						$crud[$stmts.source]["C"] += $into; 
+					}
+				}; 
+				$into = $null;
+			}
+		"InsertStatement" {
+			if ($stmts.stmt.InsertSpecification.Target.SchemaObject) {
+				$into = $(showtables $stmts.stmt.InsertSpecification.Target.SchemaObject)
+			}
+				$stmts.tables | % { 
+					if ($_ -ne $into) {
+						$crud[$stmts.source]["R"] += $_; 
+					} else {
+						$crud[$stmts.source]["C"] += $into; 
+					}
+				}; 
+				$into = $null;
+		}
+		"UpdateStatement" { 
+			$target = $(showtables $stmts.stmt.UpdateSpecification.Target.SchemaObject)
+			$stmts.tables | % { 
+				if ($_ -ne $target) {
+					$crud[$stmts.source]["R"] += $_; 
+				} else {
+					$crud[$stmts.source]["U"] += $target; 
+				}
+			};
+			$target = $null
+		}
+		"DeleteStatement" {
+			$target = $(showtables $stmts.stmt.DeleteSpecification.Target.SchemaObject)
+			$stmts.tables | % { 
+				if ($_ -ne $target) {
+					$crud[$stmts.source]["R"] += $_; 
+				} else {
+					$crud[$stmts.source]["D"] += $target; 
+				}
+			};
+			$target = $null
+		}
+		"IfStatement" { $stmts.stmt.ThenStatement.StatementList.Statements.QueryExpression  }
 		default { $stmts.stmt.gettype().name }
 	}
 }
@@ -341,20 +391,7 @@ $buffertable | % {
 foreach ($key in $crud.Keys) {
 	$key+" : "
 	foreach ($k in $crud[$key].keys) {
-		$k+" : "+($crud[$key][$k] -join ",")
+		$k+" : "+$( ($crud[$key][$k] | sort -uniq) -join ",")
 	}
 	" "
 }
-
-<#
-R   	select
-RC  	select into
-D   	delete from
-DR  	delete from ()
-U   	update
-UR  	update from ()
-C   	insert into
-CR  	insert into select from
-C   	insert into exec proc
-
-#>
