@@ -61,17 +61,18 @@ string   select * from a; select * from b         ...b                          
 .EXAMPLE
 .\tsqldep.ps1 -c "select * from a; update b set a=1; delete c; create table d(id int)"
 '-op crud' or '-c' option shows CRUD table.
-# dev #
+
 select * from a; update b set a=1; delete c; create table d(id int) :
 C : ...d
 R : ...a
-D : ...c
 U : ...b
+D : ...c
 
 
 .OUTPUTS
 returns results with table format. 
-directly access to property, easy to show you result(s).
+It is easy to see when you see the results directly. 
+such as :
 PS C:\>$(tsqldep.ps1 -r "select * from a;").tree
 
 .LINK
